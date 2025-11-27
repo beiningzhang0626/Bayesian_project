@@ -9,7 +9,7 @@ import pandas as pd
 DATA_DIR = r"D:\Bayesian_project\dataset"      # input json directory
 
 # ===== Directory where you want to save ALL CSV matrices =====
-OUTPUT_DIR = r"D:\Bayesian_project\results"
+OUTPUT_DIR = r"D:\Bayesian_project\result"
 
 # ===== Models that should have "missing questions" (substring match) =====
 # You may tweak these strings to match your actual model_name values in JSON.

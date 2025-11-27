@@ -19,23 +19,27 @@ Dependencies:
     pip install numpy pymc arviz
 """
 
+import os
 import numpy as np
 import pymc as pm
 import arviz as az
 
 # ---------------------------------------------------------
-# 0. Config: output text / csv files & (optional) JAX/GPU
+# 0. Config: output directory / text / csv files & (optional) JAX/GPU
 # ---------------------------------------------------------
 
+# Root directory where ALL outputs will be saved
+OUTPUT_DIR = r"D:\Bayesian_project\output\hierarchical"  # <-- change this
+
 # Where to save posterior summaries (accuracy, intervals, etc.)
-OUTPUT_TXT = "llm_hierarchical_results.txt"
+OUTPUT_TXT = os.path.join(OUTPUT_DIR, "llm_hierarchical_results.txt")
 
 # Where to save posterior predictive results (big_new_models only, text)
-OUTPUT_PRED_TXT = "llm_hierarchical_predictions.txt"
+OUTPUT_PRED_TXT = os.path.join(OUTPUT_DIR, "llm_hierarchical_predictions.txt")
 
 # Where to save posterior predictive EXPECTED correct counts
 # (rows = big_new_models, columns = tasks; values = predicted #correct)
-OUTPUT_PRED_CSV = "llm_hierarchical_predictions_counts.csv"
+OUTPUT_PRED_CSV = os.path.join(OUTPUT_DIR, "llm_hierarchical_predictions_counts.csv")
 
 # Try to use JAX / GPU-accelerated sampler if available.
 # If you prefer to force classic PyMC sampling on CPU, set this to False.
@@ -297,6 +301,9 @@ def summarize_new_model(idata, new_model_name):
 # ---------------------------------------------------------
 
 def main():
+    # Make sure output directory exists
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
     # Open two files: summary + predictive
     with open(OUTPUT_TXT, "w", encoding="utf-8") as f_summary, \
          open(OUTPUT_PRED_TXT, "w", encoding="utf-8") as f_pred:
