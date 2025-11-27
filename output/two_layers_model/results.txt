@@ -1,0 +1,5 @@
+MAE:            0.0443
+MSE:            0.0031
+Pearson corr:   0.9522
+95% CI coverage:0.2700
+Num points:     1026

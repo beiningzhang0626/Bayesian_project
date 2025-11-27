@@ -66,6 +66,8 @@ CORRECT_CSV = r"results/mmlu_subject_num_correct_by_model_incomplete_20pct.csv"
 
 OUTPUT_TXT     = r"output/bayesian_hierarchical_large_family_summary.txt"
 OUTPUT_NETCDF  = r"output/bayesian_hierarchical_large_family_posterior.nc"
+# NEW: CSV with per-(model, task) predicted accuracy + 95% CI
+PREDICTION_CSV = r"results/mmlu_subject_predicted_acc.csv"
 
 GLOBAL_RANDOM_SEED = 123
 np.random.seed(GLOBAL_RANDOM_SEED)
@@ -308,6 +310,40 @@ def summarize_specific_models(idata, target_model_names):
         out[name] = full[name]
     return out
 
+def save_posterior_predictions_csv(idata, out_path):
+    """
+    Save posterior accuracy per (model, task) as a long-format CSV:
+
+        model,subject,pred_mean,pred_lower,pred_upper
+    """
+    p = idata.posterior["p"]  # dims: chain, draw, model, task
+    # Collapse chain, draw into one "sample" dim
+    p_stack = p.stack(sample=("chain", "draw"))
+
+    mean = p_stack.mean(dim="sample")
+    lower = p_stack.quantile(0.025, dim="sample")
+    upper = p_stack.quantile(0.975, dim="sample")
+
+    models = p.coords["model"].values
+    tasks = p.coords["task"].values
+
+    rows = []
+    for m in models:
+        for t in tasks:
+            rows.append(
+                {
+                    "model": str(m),
+                    "subject": str(t),
+                    "pred_mean": float(mean.sel(model=m, task=t).values),
+                    "pred_lower": float(lower.sel(model=m, task=t).values),
+                    "pred_upper": float(upper.sel(model=m, task=t).values),
+                }
+            )
+
+    df = pd.DataFrame(rows)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    df.to_csv(out_path, index=False)
+    print(f"Saved prediction CSV to: {out_path}")
 
 # ---------------------------------------------------------
 # 4. Main: run everything, print + save to TXT
@@ -336,6 +372,9 @@ def main():
         idata.to_netcdf(OUTPUT_NETCDF)
     except Exception as e:
         print(f"Warning: could not save NetCDF file: {e}")
+
+    # NEW: save per-(model, task) predicted accuracies to CSV
+    save_posterior_predictions_csv(idata, PREDICTION_CSV)
 
     # Collect log lines for TXT
     lines = []
