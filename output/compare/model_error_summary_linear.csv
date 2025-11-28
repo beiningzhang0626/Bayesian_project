@@ -1,0 +1,5 @@
+model,sum_error,sum_abs_error,sum_squared_error
+Qwen/Qwen3-32B,723.0,1233.0,63697.0
+allenai/OLMo-2-0325-32B,1017.0,1079.0,36817.0
+google/gemma-3-27b-pt,-488.0,664.0,22512.0
+meta-llama/Llama-3.1-70B,2886.0,2890.0,252430.0
