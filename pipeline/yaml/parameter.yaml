@@ -1,0 +1,66 @@
+step1_merge_data:
+  data_dir: "D:/Bayesian_project/dataset"
+  output_dir: "D:/Bayesian_project/results"
+
+  subsample_model_patterns:
+    - "OLMo-2-0325-32B"
+    - "Qwen3-32B"
+    - "Llama-3.1-70B"
+    - "gemma-3-27b-pt"
+
+  subsample_fraction: 0.4
+  random_seed: 42
+
+
+step2_hierarchical:
+  input_total_csv: "D:/Bayesian_project/results/mmlu_subject_total_questions_by_model_incomplete_20pct.csv"
+  input_correct_csv: "D:/Bayesian_project/results/mmlu_subject_num_correct_by_model_incomplete_20pct.csv"
+
+  output_dir: "D:/Bayesian_project/output/hierarchical"
+
+  subsample_model_patterns:
+    - "OLMo-2-0325-32B"
+    - "Qwen3-32B"
+    - "Llama-3.1-70B"
+    - "gemma-3-27b-pt"
+
+  use_jax_sampler: true
+  mcmc_draws: 2000
+  mcmc_tune: 2000
+  mcmc_chains: 4
+  mcmc_target_accept: 0.9
+  mcmc_random_seed: 123
+
+  hdi_prob: 0.95
+
+  predictive_enabled: true
+  predictive_interval_prob: 0.95
+  predictive_random_seed: 1234
+
+
+step3_hierarchical_compare:
+  true_csv: "D:/Bayesian_project/results/mmlu_subject_num_correct_by_model.csv"
+  pred_csv: "D:/Bayesian_project/output/hierarchical/llm_hierarchical_predictions_counts.csv"
+
+  out_compare_csv: "D:/Bayesian_project/output/hierarchical/compare/result_compare_hierarchical.csv"
+  out_error_csv: "D:/Bayesian_project/output/hierarchical/compare/model_error_summary_hierarchical.csv"
+
+  model_column: "model"
+  predict_suffix: "_hier"
+
+
+step4_hierarchical_plots:
+  total_csv: "D:/Bayesian_project/results/mmlu_subject_total_questions_by_model.csv"
+  correct_csv: "D:/Bayesian_project/results/mmlu_subject_num_correct_by_model.csv"
+
+  pred_counts_csv: "D:/Bayesian_project/output/hierarchical/llm_hierarchical_predictions_counts.csv"
+
+  out_dir: "D:/Bayesian_project/output/hierarchical/plots"
+
+  model_column: "model"
+
+  overall_scatter_filename: "overall_true_vs_pred.png"
+  per_model_pattern: "{model}_acc_comparison.png"
+
+  make_per_model_plots: true
+  make_overall_scatter: true
