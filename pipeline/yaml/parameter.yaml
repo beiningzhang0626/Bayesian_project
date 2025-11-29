@@ -1,6 +1,6 @@
 step1_merge_data:
-  data_dir: "D:/Bayesian_project/dataset"
-  output_dir: "D:/Bayesian_project/results"
+  data_dir: "/Users/ardauzunoglu/Bayesian_project/dataset"
+  output_dir: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1"
 
   subsample_model_patterns:
     - "OLMo-2-0325-32B"
@@ -8,15 +8,15 @@ step1_merge_data:
     - "Llama-3.1-70B"
     - "gemma-3-27b-pt"
 
-  subsample_fraction: 0.4
+  subsample_fraction: 0.1
   random_seed: 42
 
 
 step2_hierarchical:
-  input_total_csv: "D:/Bayesian_project/results/mmlu_subject_total_questions_by_model_incomplete_20pct.csv"
-  input_correct_csv: "D:/Bayesian_project/results/mmlu_subject_num_correct_by_model_incomplete_20pct.csv"
+  input_total_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/mmlu_subject_total_questions_by_model_incomplete_10pct.csv"
+  input_correct_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/mmlu_subject_num_correct_by_model_incomplete_10pct.csv"
 
-  output_dir: "D:/Bayesian_project/output/hierarchical"
+  output_dir: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/hierarchical"
 
   subsample_model_patterns:
     - "OLMo-2-0325-32B"
@@ -25,8 +25,8 @@ step2_hierarchical:
     - "gemma-3-27b-pt"
 
   use_jax_sampler: true
-  mcmc_draws: 2000
-  mcmc_tune: 2000
+  mcmc_draws: 10
+  mcmc_tune: 10
   mcmc_chains: 4
   mcmc_target_accept: 0.9
   mcmc_random_seed: 123
@@ -39,23 +39,23 @@ step2_hierarchical:
 
 
 step3_hierarchical_compare:
-  true_csv: "D:/Bayesian_project/results/mmlu_subject_num_correct_by_model.csv"
-  pred_csv: "D:/Bayesian_project/output/hierarchical/llm_hierarchical_predictions_counts.csv"
+  true_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/mmlu_subject_num_correct_by_model.csv"
+  pred_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/hierarchical/llm_hierarchical_predictions_counts.csv"
 
-  out_compare_csv: "D:/Bayesian_project/output/hierarchical/compare/result_compare_hierarchical.csv"
-  out_error_csv: "D:/Bayesian_project/output/hierarchical/compare/model_error_summary_hierarchical.csv"
+  out_compare_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/hierarchical/compare/result_compare_hierarchical.csv"
+  out_error_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/hierarchical/compare/model_error_summary_hierarchical.csv"
 
   model_column: "model"
   predict_suffix: "_hier"
 
 
 step4_hierarchical_plots:
-  total_csv: "D:/Bayesian_project/results/mmlu_subject_total_questions_by_model.csv"
-  correct_csv: "D:/Bayesian_project/results/mmlu_subject_num_correct_by_model.csv"
+  total_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/mmlu_subject_total_questions_by_model.csv"
+  correct_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/mmlu_subject_num_correct_by_model.csv"
 
-  pred_counts_csv: "D:/Bayesian_project/output/hierarchical/llm_hierarchical_predictions_counts.csv"
+  pred_counts_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/hierarchical/llm_hierarchical_predictions_counts.csv"
 
-  out_dir: "D:/Bayesian_project/output/hierarchical/plots"
+  out_dir: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/hierarchical/plots"
 
   model_column: "model"
 

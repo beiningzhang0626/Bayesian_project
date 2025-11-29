@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import arviz as az
+import matplotlib.pyplot as plt
 
 
 @dataclass
@@ -218,6 +219,7 @@ def run_step2_hierarchical(cfg: HierarchicalModelConfig) -> Tuple[az.InferenceDa
     sizes = np.array([parse_model_size(m, cfg.model_size_regex) for m in m_names], dtype=float)
 
     big_models = np.array([m for m in m_names if is_big_new_model(m, cfg.subsample_model_patterns)])
+    big_models_set = set(map(str, big_models))  # only use big models for diagnostics
 
     sum_txt = os.path.join(cfg.output_dir, cfg.results_txt)
     pred_txt = os.path.join(cfg.output_dir, cfg.pred_txt)
@@ -234,27 +236,214 @@ def run_step2_hierarchical(cfg: HierarchicalModelConfig) -> Tuple[az.InferenceDa
             print(msg)
             fp.write(msg + "\n")
 
-        log("fit")
+        #log("fit")
         model, idata, info = build_and_sample_model(n, k, sizes, m_names, t_names, cfg)
+
+        posterior_nc = os.path.join(cfg.output_dir, "llm_hierarchical_posterior.nc")
+        az.to_netcdf(idata, posterior_nc)
+        log(f"posterior saved: {posterior_nc}")
+
+        summary = az.summary(
+            idata,
+            var_names=["mu_theta", "sigma_theta", "beta_size", "mu_delta", "sigma_delta", "theta", "delta"],
+            round_to=3,
+        )
+        diag_txt = os.path.join(cfg.output_dir, "llm_hierarchical_diagnostics.txt")
+        with open(diag_txt, "w", encoding="utf-8") as fd:
+            fd.write(summary.to_string())
+        log(f"diagnostics summary saved: {diag_txt}")
+
+        max_rhat = float(summary["r_hat"].max())
+        min_ess_bulk = float(summary["ess_bulk"].min())
+        min_ess_tail = float(summary["ess_tail"].min())
+
+        n_div = int(idata.sample_stats["diverging"].sum().values)
+        try:
+            bfmi = az.bfmi(idata)
+            min_bfmi = float(bfmi.min())
+        except Exception:
+            min_bfmi = float("nan")
+
+        log(f"convergence metrics:")
+        log(f"  max_rhat      = {max_rhat:.3f}")
+        log(f"  min_ess_bulk  = {min_ess_bulk:.1f}")
+        log(f"  min_ess_tail  = {min_ess_tail:.1f}")
+        log(f"  n_divergences = {n_div}")
+        log(f"  min_BFMI      = {min_bfmi:.3f}")
+
+        # Per model diagnostics (restricted to big models)
+        rhat_ds = az.rhat(idata, var_names=["theta", "p"])
+        ess_bulk_ds = az.ess(idata, method="bulk", var_names=["theta", "p"])
+        ess_tail_ds = az.ess(idata, method="tail", var_names=["theta", "p"])
+
+        # DataArrays
+        rhat_theta_da = rhat_ds["theta"]          # (model,)
+        rhat_p_da = rhat_ds["p"]                  # (model, task)
+
+        ess_bulk_theta_da = ess_bulk_ds["theta"]  # (model,)
+        ess_tail_theta_da = ess_tail_ds["theta"]  # (model,)
+
+        ess_bulk_p_da = ess_bulk_ds["p"]          # (model, task)
+        ess_tail_p_da = ess_tail_ds["p"]          # (model, task)
+
+        rows = []
+        for m in rhat_theta_da.coords["model"].values:
+            m_str = str(m)
+
+            # only keep big models in diagnostics
+            if m_str not in big_models_set:
+                continue
+
+            # theta diagnostics (scalar per model)
+            th_rhat = float(rhat_theta_da.sel(model=m).values)
+            th_ess_bulk = float(ess_bulk_theta_da.sel(model=m).values)
+            th_ess_tail = float(ess_tail_theta_da.sel(model=m).values)
+
+            # p diagnostics aggregated over tasks
+            rhat_p_m = rhat_p_da.sel(model=m)             # (task,)
+            ess_bulk_p_m = ess_bulk_p_da.sel(model=m)     # (task,)
+            ess_tail_p_m = ess_tail_p_da.sel(model=m)     # (task,)
+
+            p_max_rhat = float(rhat_p_m.max(dim="task").values)
+            p_min_ess_bulk = float(ess_bulk_p_m.min(dim="task").values)
+            p_min_ess_tail = float(ess_tail_p_m.min(dim="task").values)
+
+            rows.append(
+                {
+                    "model": m_str,
+                    "theta_rhat": th_rhat,
+                    "theta_ess_bulk": th_ess_bulk,
+                    "theta_ess_tail": th_ess_tail,
+                    "p_max_rhat": p_max_rhat,
+                    "p_min_ess_bulk": p_min_ess_bulk,
+                    "p_min_ess_tail": p_min_ess_tail,
+                }
+            )
+
+        df_models = pd.DataFrame(rows)
+        diag_models_csv = os.path.join(cfg.output_dir, "llm_hierarchical_diagnostics_per_model.csv")
+        df_models.to_csv(diag_models_csv, index=False)
+        log(f"per-model diagnostics saved: {diag_models_csv}")
+
+        plots_dir = os.path.join(cfg.output_dir, "diagnostics_plots")
+        os.makedirs(plots_dir, exist_ok=True)
+        log(f"saving diagnostic plots under: {plots_dir}")
+
+        def _sanitize(name: str) -> str:
+            # safe filename based on model name
+            return re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
+
+        def _save_current_fig(path: str):
+            plt.tight_layout()
+            plt.savefig(path, dpi=150)
+            plt.close()
+            log(f"saved plot: {path}")
+
+        # Global parameters trace plot
+        try:
+            axes = az.plot_trace(
+                idata,
+                var_names=["mu_theta", "sigma_theta", "beta_size", "mu_delta", "sigma_delta"],
+            )
+            plt.suptitle(
+                "Global Parameters", y=0.975,
+            )
+
+            # Improve x/y labels and legends for trace panels
+            if isinstance(axes, np.ndarray):
+                axes_arr = np.atleast_2d(axes)
+                for ax_row in axes_arr:
+                    trace_ax = ax_row[0]  # left column: trace
+                    trace_ax.set_xlabel("Parameter Value")
+                    trace_ax = ax_row[1]  # left column: trace
+                    trace_ax.set_ylabel("Parameter Value")
+                    trace_ax.set_xlabel("MCMC Draw")
+
+            _save_current_fig(os.path.join(plots_dir, "trace_global.png"))
+        except Exception as e:
+            log(f"warn: failed to create global trace plot: {e}")
+
+        # Theta / delta traces, labeled per model / tasks
+        try:
+            theta_models = list(idata.posterior["theta"].coords["model"].values)
+            print(theta_models)
+            task_names = list(idata.posterior["p"].coords["task"].values)
+
+            # use only big models for theta traces (fallback to first 4 if none match)
+            theta_models_sel = [m for m in theta_models if str(m) in big_models_set]
+            if not theta_models_sel:
+                theta_models_sel = theta_models[:4]
+
+            # per-model theta trace plots
+            for m in theta_models_sel:
+                m_str = str(m)
+                axes = az.plot_trace(
+                    idata,
+                    var_names=["theta"],
+                    coords={"model": [m]},
+                )
+                plt.suptitle(
+                    f"Theta Trace\n{m_str}",
+                    y=0.95,
+                )
+                if isinstance(axes, np.ndarray):
+                    axes_arr = np.atleast_2d(axes)
+                    for ax_row in axes_arr:
+                        trace_ax = ax_row[0]  # left column: trace
+                        trace_ax.set_xlabel("Parameter Value")
+                        trace_ax = ax_row[1]  # left column: trace
+                        trace_ax.set_ylabel("Parameter Value")
+                        trace_ax.set_xlabel("MCMC Draw")
+
+                fname = f"trace_theta_{_sanitize(m_str)}.png"
+                _save_current_fig(os.path.join(plots_dir, fname))
+
+            # delta (per-task difficulty) – small subset of tasks, but labeled
+            delta_tasks_sel = task_names[:4]
+            axes = az.plot_trace(
+                idata,
+                var_names=["delta"],
+                coords={"task": delta_tasks_sel},
+            )
+            tasks_label = ", ".join(str(t) for t in delta_tasks_sel)
+            plt.suptitle(
+                f"Delta Trace\nTasks: {tasks_label}",
+                y=0.95,
+            )
+            if isinstance(axes, np.ndarray):
+                axes_arr = np.atleast_2d(axes)
+                for ax_row in axes_arr:
+                    trace_ax = ax_row[0]  # left column: trace
+                    trace_ax.set_xlabel("Parameter Value")
+                    trace_ax = ax_row[1]  # left column: trace
+                    trace_ax.set_ylabel("Parameter Value")
+                    trace_ax.set_xlabel("MCMC Draw")
+                    
+            _save_current_fig(os.path.join(plots_dir, "trace_delta_subset.png"))
+        except Exception as e:
+            log(f"warn: failed to create theta/delta trace plots: {e}")
+
         _ = model
-        log(f"sampler: {info}")
-        log("done sampling")
+        #log(f"sampler: {info}")
+        #log("done sampling")
 
         full_sum = summarize_model_task_accuracy(idata, hdi_prob=cfg.hdi_prob)
 
-        log("posterior:")
+        #log("posterior:")
         for m in m_names:
-            log(f"\n[{m}]")
+            #log(f"\n[{m}]")
             for t in t_names:
                 st = full_sum[m][t]
-                log(f"  {t}: mean={st['mean']:.3f}, ci=({st['hdi_3%']:.3f},{st['hdi_97%']:.3f})")
+                #log(f"  {t}: mean={st['mean']:.3f}, ci=({st['hdi_3%']:.3f},{st['hdi_97%']:.3f})")
 
-        log("\nbig models:")
+        #log("\nbig models:")
         if big_models.size == 0:
-            log("  none")
+            #log("  none")
+            pass
         else:
             for m in big_models:
-                log(f"  {m}")
+                #log(f"  {m}")
+                pass
 
             for name in big_models:
                 try:
@@ -262,10 +451,10 @@ def run_step2_hierarchical(cfg: HierarchicalModelConfig) -> Tuple[az.InferenceDa
                 except ValueError as e:
                     log(f"warn: {e}")
                     continue
-                log(f"\nsummary for {name}:")
+                #log(f"\nsummary for {name}:")
                 for t in t_names:
                     st = sm[t]
-                    log(f"  {t}: mean={st['mean']:.3f}, ci=({st['hdi_3%']:.3f},{st['hdi_97%']:.3f})")
+                    #log(f"  {t}: mean={st['mean']:.3f}, ci=({st['hdi_3%']:.3f},{st['hdi_97%']:.3f})")
 
         saved_pred_csv = None
         if cfg.predictive_enabled and big_models.size > 0:
@@ -281,7 +470,7 @@ def run_step2_hierarchical(cfg: HierarchicalModelConfig) -> Tuple[az.InferenceDa
 
             N_ref = ref_row.astype(int)
 
-            log_pred("predictive:")
+            #log_pred("predictive:")
             if cfg.predictive_random_seed is not None:
                 rng = np.random.default_rng(cfg.predictive_random_seed)
             else:
@@ -295,15 +484,15 @@ def run_step2_hierarchical(cfg: HierarchicalModelConfig) -> Tuple[az.InferenceDa
 
             for i_m, name in enumerate(big_models):
                 if name not in p_models:
-                    log_pred(f"skip {name}, not in coords")
+                    #log_pred(f"skip {name}, not in coords")
                     continue
                 m_idx = int(np.where(p_models == name)[0][0])
 
-                log_pred(f"\n{name}:")
+                #log_pred(f"\n{name}:")
                 for j_t, t in enumerate(t_names):
                     N = int(N_ref[j_t])
                     if N <= 0:
-                        log_pred(f"  {t}: N<=0")
+                        #log_pred(f"  {t}: N<=0")
                         continue
 
                     p_samp = p_post.isel(model=m_idx, task=j_t).values.flatten()
@@ -312,13 +501,13 @@ def run_step2_hierarchical(cfg: HierarchicalModelConfig) -> Tuple[az.InferenceDa
                     lo, hi = np.percentile(k_future, [q_lo, q_hi])
 
                     pm_mat[i_m, j_t] = mu
-                    log_pred(f"  {t}: mean={mu:.1f}/{N}, band=({lo:.0f},{hi:.0f})")
+                    #log_pred(f"  {t}: mean={mu:.1f}/{N}, band=({lo:.0f},{hi:.0f})")
 
             df_pred = pd.DataFrame(pm_mat, index=big_models, columns=t_names)
             df_pred_int = df_pred.round().astype(int)
             df_pred_int.to_csv(pred_csv, index_label="model")
             saved_pred_csv = pred_csv
-            log_pred(f"\nsaved: {pred_csv}")
+            #log_pred(f"\nsaved: {pred_csv}")
 
         log(f"\nsummary file: {sum_txt}")
         log_pred(f"\npred file: {pred_txt}")
