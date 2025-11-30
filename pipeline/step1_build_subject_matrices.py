@@ -5,7 +5,7 @@ import glob
 import json
 import random
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional
 from collections import Counter
 
 import pandas as pd
@@ -18,6 +18,8 @@ class SubjectAggregationConfig:
     subsample_model_patterns: List[str]
     subsample_fraction: float
     random_seed: int = 42
+    keep_models: Optional[List[str]] = None
+    keep_subjects: Optional[List[str]] = None
 
 
 @dataclass
@@ -28,24 +30,24 @@ class SubjectAggregationOutputs:
     incomplete_correct_csv: str
 
 
-def model_needs_subsample(model_name: str, file_basename: str, patterns: List[str]) -> bool:
-    s = model_name + " " + file_basename
-    return any(p in s for p in patterns)
+def model_needs_subsample(name: str, base: str, pats: List[str]) -> bool:
+    s = name + " " + base
+    return any(p in s for p in pats)
 
 
 def run_step1_subject_aggregation(cfg: SubjectAggregationConfig) -> SubjectAggregationOutputs:
     os.makedirs(cfg.output_dir, exist_ok=True)
     random.seed(cfg.random_seed)
 
-    js_files = sorted(glob.glob(os.path.join(cfg.data_dir, "*.json")))
-    if not js_files:
+    js = sorted(glob.glob(os.path.join(cfg.data_dir, "*.json")))
+    if not js:
         raise RuntimeError(f"no json files under {cfg.data_dir}")
 
     tot_by_model: Dict[str, Counter] = {}
     cor_by_model: Dict[str, Counter] = {}
-    per_model_subj_correct: Dict[str, Dict[str, List[int]]] = {}
+    hits_by_model: Dict[str, Dict[str, List[int]]] = {}
 
-    for p in js_files:
+    for p in js:
         with open(p, "r", encoding="utf-8") as f:
             d = json.load(f)
 
@@ -62,63 +64,114 @@ def run_step1_subject_aggregation(cfg: SubjectAggregationConfig) -> SubjectAggre
 
             v = r.get("is_correct", 0)
             try:
-                v = int(round(float(v)))
+                v_int = int(round(float(v)))
             except (TypeError, ValueError):
-                v = 0
+                v_int = 0
 
-            c_cor[subj] += v
-            subj_hits.setdefault(subj, []).append(v)
+            c_cor[subj] += v_int
+            subj_hits.setdefault(subj, []).append(v_int)
 
         tot_by_model[m] = c_tot
         cor_by_model[m] = c_cor
-        per_model_subj_correct[m] = subj_hits
+        hits_by_model[m] = subj_hits
 
-    models = list(tot_by_model.keys())
+    all_models = list(tot_by_model.keys())
+    if not all_models:
+        raise RuntimeError("no models found")
+
+    all_subsample = [m for m in all_models if model_needs_subsample(m, "", cfg.subsample_model_patterns)]
+
+    if cfg.keep_models:
+        keep_set = set(cfg.keep_models)
+        kept = [m for m in all_models if m in keep_set]
+        if not kept:
+            raise RuntimeError("keep_models removed all models")
+
+        dropped_targets = [m for m in all_subsample if m not in kept]
+        if dropped_targets:
+            raise RuntimeError(
+                "these subsampled models were dropped by keep_models, but later steps expect them:\n"
+                f"  {dropped_targets}"
+            )
+
+        tot_by_model = {m: tot_by_model[m] for m in kept}
+        cor_by_model = {m: cor_by_model[m] for m in kept}
+        hits_by_model = {m: hits_by_model[m] for m in kept}
+        models = kept
+    else:
+        models = all_models
+
+    if cfg.keep_subjects:
+        keep_subj = set(cfg.keep_subjects)
+
+        subj_union = set()
+        for c in tot_by_model.values():
+            subj_union.update(c.keys())
+
+        missing = sorted(keep_subj - subj_union)
+        if missing:
+            raise RuntimeError(
+                "subjects in keep_subjects not found in data:\n"
+                f"  {missing}"
+            )
+
+        for m in models:
+            c_tot = tot_by_model[m]
+            c_cor = cor_by_model[m]
+            sh = hits_by_model[m]
+
+            new_tot = Counter({s: c for s, c in c_tot.items() if s in keep_subj})
+            new_cor = Counter({s: c for s, c in c_cor.items() if s in keep_subj})
+            new_hits = {s: arr for s, arr in sh.items() if s in keep_subj}
+
+            tot_by_model[m] = new_tot
+            cor_by_model[m] = new_cor
+            hits_by_model[m] = new_hits
+
+    subs = sorted({s for c in tot_by_model.values() for s in c.keys()})
+    if not subs:
+        raise RuntimeError("no subjects left after filtering")
+
     ref = models[0]
-    ref_subj = set(tot_by_model[ref].keys())
+    ref_sub = set(tot_by_model[ref].keys())
 
-    print("check subjects")
-
+    print("check subject sets")
     for m in models:
         s = set(tot_by_model[m].keys())
-        if s != ref_subj:
-            only_ref = sorted(ref_subj - s)
-            only_m = sorted(s - ref_subj)
-            print("warn:", m)
+        if s != ref_sub:
+            only_ref = sorted(ref_sub - s)
+            only_cur = sorted(s - ref_sub)
+            print("WARN subjects:", m)
             if only_ref:
                 print("  only_ref:", only_ref)
-            if only_m:
-                print("  only_cur:", only_m)
+            if only_cur:
+                print("  only_cur:", only_cur)
         else:
-            print("ok:", m)
+            print("OK subjects:", m)
 
-    print("check counts")
-
+    print("check question counts")
     ref_cnt = tot_by_model[ref]
     for m in models:
         cnt = tot_by_model[m]
         diff = []
-        for subj in ref_subj:
+        for subj in ref_sub:
             a = ref_cnt[subj]
             b = cnt.get(subj, 0)
             if a != b:
                 diff.append((subj, a, b))
         if diff:
-            print("warn_counts:", m)
+            print("WARN counts:", m)
             for subj, a, b in diff:
-                print(f"  {subj}: {a} vs {b}")
+                print(f"  {subj}: ref={a} cur={b}")
         else:
-            print("ok_counts:", m)
+            print("OK counts:", m)
 
-    all_subj = sorted({s for c in tot_by_model.values() for s in c.keys()})
-
-    df_tot = pd.DataFrame(index=models, columns=all_subj)
-    df_cor = pd.DataFrame(index=models, columns=all_subj)
-
+    df_tot = pd.DataFrame(index=models, columns=subs)
+    df_cor = pd.DataFrame(index=models, columns=subs)
     for m in models:
         t = tot_by_model[m]
         c = cor_by_model[m]
-        for subj in all_subj:
+        for subj in subs:
             df_tot.loc[m, subj] = t.get(subj, 0)
             df_cor.loc[m, subj] = c.get(subj, 0)
 
@@ -131,13 +184,16 @@ def run_step1_subject_aggregation(cfg: SubjectAggregationConfig) -> SubjectAggre
     df_tot.to_csv(out_tot, index_label="model")
     df_cor.to_csv(out_cor, index_label="model")
 
-    print("saved full")
+    print("saved full:")
+    print("  total ->", out_tot)
+    print("  correct ->", out_cor)
 
     inc_tot: Dict[str, Counter] = {}
     inc_cor: Dict[str, Counter] = {}
 
     for m in models:
         need = model_needs_subsample(m, "", cfg.subsample_model_patterns)
+
         if not need:
             inc_tot[m] = tot_by_model[m]
             inc_cor[m] = cor_by_model[m]
@@ -145,33 +201,33 @@ def run_step1_subject_aggregation(cfg: SubjectAggregationConfig) -> SubjectAggre
 
         t_inc = Counter()
         c_inc = Counter()
-        subj_hits = per_model_subj_correct[m]
+        sh = hits_by_model[m]
 
-        for subj, arr in subj_hits.items():
-            n = len(arr)
-            if n == 0:
+        for subj, arr in sh.items():
+            n_q = len(arr)
+            if n_q == 0:
                 continue
-            k = int(round(cfg.subsample_fraction * n))
-            k = max(0, min(n, k))
 
-            if k == 0:
+            k_q = int(round(cfg.subsample_fraction * n_q))
+            k_q = max(0, min(n_q, k_q))
+
+            if k_q == 0:
                 t_inc[subj] = 0
                 c_inc[subj] = 0
             else:
-                pick = random.sample(arr, k)
-                t_inc[subj] = k
+                pick = random.sample(arr, k_q)
+                t_inc[subj] = k_q
                 c_inc[subj] = sum(pick)
 
         inc_tot[m] = t_inc
         inc_cor[m] = c_inc
 
-    df_tot_inc = pd.DataFrame(index=models, columns=all_subj)
-    df_cor_inc = pd.DataFrame(index=models, columns=all_subj)
-
+    df_tot_inc = pd.DataFrame(index=models, columns=subs)
+    df_cor_inc = pd.DataFrame(index=models, columns=subs)
     for m in models:
         t = inc_tot[m]
         c = inc_cor[m]
-        for subj in all_subj:
+        for subj in subs:
             df_tot_inc.loc[m, subj] = t.get(subj, 0)
             df_cor_inc.loc[m, subj] = c.get(subj, 0)
 
@@ -185,7 +241,9 @@ def run_step1_subject_aggregation(cfg: SubjectAggregationConfig) -> SubjectAggre
     df_tot_inc.to_csv(out_tot_inc, index_label="model")
     df_cor_inc.to_csv(out_cor_inc, index_label="model")
 
-    print("saved incomplete")
+    print("saved incomplete:")
+    print("  total ->", out_tot_inc)
+    print("  correct ->", out_cor_inc)
     print("step1 done")
 
     return SubjectAggregationOutputs(

@@ -11,6 +11,21 @@ step1_merge_data:
   subsample_fraction: 0.1
   random_seed: 42
 
+  #must include every model you want to subsample/predict later, otherwise something horrible would happen
+  #if you want to keep everything, just enter null, then it would keep everything
+  keep_models:
+    - "OLMo-2-0325-32B"
+    - "Qwen3-32B"
+    - "Llama-3.1-70B"
+    - "gemma-3-27b-pt"
+    
+  keep_subjects:
+    - "abstract_algebra"
+    - "anatomy"
+    - "econometrics"
+    - "high_school_mathematics"
+    # etc...
+
 
 step2_hierarchical:
   input_total_csv: "/Users/ardauzunoglu/Bayesian_project/results/ssf0.1/mmlu_subject_total_questions_by_model_incomplete_10pct.csv"
