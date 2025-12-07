@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import json
 import argparse
 
@@ -31,10 +30,10 @@ def estimate_tokens_and_tflops(
             total_tokens += pair_words * tokens_per_word
             total_pairs += 1
 
-    # Model params
+    # model params
     num_params = params_in_billion * 1e9  # convert B -> raw count
 
-    # FLOPs ≈ 2 * params * tokens
+    # fLOPs = 2 * params * tokens it should be approx but we use this here
     total_flops = 2.0 * num_params * total_tokens
     total_tflops = total_flops / 1e12
 
@@ -45,21 +44,13 @@ def estimate_tokens_and_tflops(
     print(f"Estimated total FLOPs: {total_flops:.3e}")
     print(f"Estimated total TFLOPs: {total_tflops:.2f}")
 
-    # Also return values in case you want to import as a module
-    return {
-        "total_pairs": total_pairs,
-        "total_words": total_words,
-        "total_tokens": total_tokens,
-        "total_flops": total_flops,
-        "total_tflops": total_tflops,
-    }
+    # also return values in case you want to import as a module
+    return {"total_pairs": total_pairs,"total_words": total_words,"total_tokens": total_tokens,"total_flops": total_flops, "total_tflops": total_tflops}
 
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Estimate TFLOPs for log-prob evaluation over a JSON results file.\n"
-            "Assumes each prompt is question + one choice, and question is "
-            "re-evaluated for each choice."
+            "estimate Flops"
         )
     )
     parser.add_argument("json_path", type=str, help="Path to the JSON file")
@@ -67,13 +58,13 @@ def main():
         "--params-b",
         type=float,
         required=True,
-        help="Model size in billions of parameters (e.g. 70.6 for Llama3.1-70B)",
+        help="model size in billions of parameters",
     )
     parser.add_argument(
         "--tokens-per-word",
         type=float,
         default=5.0 / 4.0,
-        help="Approximate tokens per word (default: 1.25 = 5/4)",
+        help="approximate tokens per word",
     )
 
     args = parser.parse_args()
