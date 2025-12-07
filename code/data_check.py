@@ -5,14 +5,8 @@ import random
 from collections import Counter
 import pandas as pd
 
-# ===== Directory with the original JSON result files =====
-DATA_DIR = r"D:\Bayesian_project\dataset"      # input json directory
-
-# ===== Directory where you want to save ALL CSV matrices =====
+DATA_DIR = r"D:\Bayesian_project\dataset"
 OUTPUT_DIR = r"D:\Bayesian_project\result"
-
-# ===== Models that should have "missing questions" (substring match) =====
-# You may tweak these strings to match your actual model_name values in JSON.
 SUBSAMPLE_MODEL_PATTERNS = [
     "OLMo-2-0325-32B",
     "Qwen3-32B",
@@ -20,42 +14,21 @@ SUBSAMPLE_MODEL_PATTERNS = [
     "gemma-3-27b-pt",
 ]
 
-# ===== Fraction of questions to KEEP within each subject for those models =====
 SUBSAMPLE_FRACTION = 0.2   # e.g. 0.7 = keep 70% per subject
-
-# ===== Random seed for reproducibility =====
 RANDOM_SEED = 42
 
 
 def model_needs_subsample(model_name: str, file_basename: str) -> bool:
-    """
-    Decide whether this model should have missing questions.
-    We check both model_name and file_basename using substring match.
-    """
     combined = model_name + " " + file_basename
     return any(pat in combined for pat in SUBSAMPLE_MODEL_PATTERNS)
 
 
 def main():
-    # Make sure output directory exists
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    # Reproducible randomness
     random.seed(RANDOM_SEED)
-
-    # 1. Find all json files
     json_files = sorted(glob.glob(os.path.join(DATA_DIR, "*.json")))
-    if not json_files:
-        raise RuntimeError(f"No json files found under {DATA_DIR}")
-
-    # Dicts for the FULL data:
-    #   model_name -> Counter(subject -> total number of questions)
-    #   model_name -> Counter(subject -> number of correct questions)
     subject_total_counts_per_model = {}
     subject_correct_counts_per_model = {}
-
-    # For subsampling we also keep per-question correctness:
-    #   model_name -> dict(subject -> list[0/1])
     per_model_subject_is_correct = {}
 
     for path in json_files:
@@ -87,13 +60,11 @@ def main():
         subject_total_counts_per_model[model_name] = total_counter
         subject_correct_counts_per_model[model_name] = correct_counter
         per_model_subject_is_correct[model_name] = subj_to_is_correct_list
-
-    # ===== 2. Check whether the set of subjects is consistent =====
     models = list(subject_total_counts_per_model.keys())
     ref_model = models[0]
     ref_subjects = set(subject_total_counts_per_model[ref_model].keys())
 
-    print(f"Use {ref_model} as the reference to check subject consistency:\n")
+    print(f"use {ref_model} as the reference to check subject consistency:\n")
 
     for m in models:
         s = set(subject_total_counts_per_model[m].keys())
@@ -108,8 +79,7 @@ def main():
         else:
             print(f"[OK] subject set of {m} is exactly the same as {ref_model}.")
 
-    # ===== 3. Check whether the number of questions per subject is consistent =====
-    print("\n====== Check whether the number of questions per subject is consistent ======\n")
+    print("check whether the number of questions per subject is consistent")
 
     ref_counts = subject_total_counts_per_model[ref_model]
     for m in models:
@@ -126,14 +96,10 @@ def main():
                 print(f"  {subj}: reference={c_ref}, current={c_m}")
         else:
             print(f"[OK] For each subject, the number of questions in {m} is also the same as {ref_model}.")
-
-    # ===== 4. Generate matrices for FULL data =====
     all_subjects = sorted(
         {subj for counts in subject_total_counts_per_model.values()
          for subj in counts.keys()}
     )
-
-    # Rows = model names, columns = subjects
     df_total = pd.DataFrame(index=models, columns=all_subjects)
     df_correct = pd.DataFrame(index=models, columns=all_subjects)
 
@@ -146,27 +112,16 @@ def main():
 
     df_total = df_total.fillna(0).astype(int)
     df_correct = df_correct.fillna(0).astype(int)
-
-    # ===== 5. Save FULL matrices =====
     out_total = os.path.join(OUTPUT_DIR, "mmlu_subject_total_questions_by_model.csv")
     out_correct = os.path.join(OUTPUT_DIR, "mmlu_subject_num_correct_by_model.csv")
 
     df_total.to_csv(out_total, index_label="model")
     df_correct.to_csv(out_correct, index_label="model")
 
-    print(f"\nSaved FULL total number-of-questions matrix to: {out_total}")
-    print(f"Saved FULL number-of-correct-questions matrix to: {out_correct}")
-
-    # ===== 6. Build INCOMPLETE counts by subsampling questions per subject =====
     subject_total_counts_incomplete = {}
     subject_correct_counts_incomplete = {}
 
     for m in models:
-        # Find which original file name corresponds? We only have model_name here.
-        # For deciding subsample, we approximate with model_name alone;
-        # if needed, adjust patterns to match your actual model_name strings.
-        # (file_basename is not tracked here; if you want stricter control,
-        #  you can store it in a dict when reading JSON.)
         needs_subsample = model_needs_subsample(m, "")
 
         if not needs_subsample:
@@ -174,8 +129,6 @@ def main():
             subject_total_counts_incomplete[m] = subject_total_counts_per_model[m]
             subject_correct_counts_incomplete[m] = subject_correct_counts_per_model[m]
             continue
-
-        # For target models: random subsample within each subject
         total_counter_inc = Counter()
         correct_counter_inc = Counter()
         subj_to_list = per_model_subject_is_correct[m]
@@ -200,8 +153,6 @@ def main():
 
         subject_total_counts_incomplete[m] = total_counter_inc
         subject_correct_counts_incomplete[m] = correct_counter_inc
-
-    # ===== 7. Convert incomplete counts to matrices =====
     df_total_inc = pd.DataFrame(index=models, columns=all_subjects)
     df_correct_inc = pd.DataFrame(index=models, columns=all_subjects)
 
@@ -225,11 +176,6 @@ def main():
 
     df_total_inc.to_csv(out_total_inc, index_label="model")
     df_correct_inc.to_csv(out_correct_inc, index_label="model")
-
-    print(f"\nSaved INCOMPLETE total number-of-questions matrix to: {out_total_inc}")
-    print(f"Saved INCOMPLETE number-of-correct-questions matrix to: {out_correct_inc}")
-    print("\nDone ✅ Missing-questions case generated.")
-
 
 if __name__ == "__main__":
     main()
