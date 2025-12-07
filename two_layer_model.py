@@ -18,22 +18,22 @@ OUT_PRED = r"results/mmlu_subject_predicted_acc.csv"
 
 SEED = 123
 np.random.seed(SEED)
-
+# log big model names here
 BIG_PAT = ["OLMo-2-0325-32B", "Qwen3-32B", "Llama-3.1-70B","gemma-3-27b-pt"]
-
+# log family prefix strings here
 FAMS = ["meta-llama",
     "allenai/OLMo", "Qwen",
     "google/gemma"
 ]
 
-
+# helper methd for parsing the name of models
 def parse_size(name: str) -> float:
     m = re.findall(r"([0-9]+(?:\.[0-9]+)?)\s*[bB]", name)
     if not m:
         raise ValueError(f"cannot parse size from: {name}")
     return float(m[-1])
 
-
+# parse family prefixes for models
 def parse_fam(name: str) -> str:
     for fam in FAMS:
         if name.startswith(fam):
@@ -48,32 +48,20 @@ def is_big(name: str) -> bool:
 #load the dataset that is alraedy preprocessed
 df_n = pd.read_csv(CSV_N)
 df_k = pd.read_csv(CSV_K)
-
-if "model" not in df_n.columns or "model" not in df_k.columns:
-    raise ValueError("CSVs need 'model' column")
-
 df_n = df_n.set_index("model")
 df_k = df_k.set_index("model")
 df_k = df_k.loc[df_n.index, df_n.columns]
-
 m_names = df_n.index.to_numpy()
 t_names = df_n.columns.to_numpy()
-
 n = df_n.to_numpy(dtype=int)
 k = df_k.to_numpy(dtype=int)
-
 M, T = n.shape
-assert k.shape == (M, T)
-
+assert k.shape == (M, T) # should work
 sizes = np.array([parse_size(m) for m in m_names], dtype=float)
-if sizes.shape != (M,):
-    raise ValueError("size shape mismatch")
-
 fam_raw = [parse_fam(m) for m in m_names]
 fam_unique = np.array(sorted(set(fam_raw)))
 F = len(fam_unique)
 fam_idx = np.array([np.where(fam_unique == f)[0][0] for f in fam_raw], dtype=int)
-
 big_mask = np.array([is_big(m) for m in m_names])
 big_models = m_names[big_mask]
 
@@ -86,25 +74,21 @@ def build_and_sample(k,n,sizes,m_names,t_names,fam_names,fam_idx,seed=123):
         k_obs = pm.Data("k_obs", k, dims=("model", "task"))
         size = pm.Data("size", sizes, dims=("model",))
         fam = pm.Data("fam_idx", fam_idx, dims=("model",))
-
         mu_th = pm.Normal("mu_theta", mu=0.0, sigma=2.0)
         sig_fam = pm.HalfNormal("sigma_family", sigma=1.0)
         sig_th = pm.HalfNormal("sigma_theta", sigma=1.0)
         beta = pm.Normal("beta_size", mu=0.0, sigma=1.0)
-
         th_fam = pm.Normal("theta_family", mu=mu_th, sigma=sig_fam, dims=("family",))
-
         th_mean = th_fam[fam] + beta * pm.math.log(size)
         theta = pm.Normal("theta", mu=th_mean, sigma=sig_th, dims=("model",))
         mu_d = pm.Normal("mu_delta", mu=0.0, sigma=2.0)
         sig_d = pm.HalfNormal("sigma_delta", sigma=1.0)
         delta = pm.Normal("delta", mu=mu_d, sigma=sig_d, dims=("task",))
-
         logit_p = theta[:, None] - delta[None, :]
         p = pm.Deterministic("p", pm.math.sigmoid(logit_p), dims=("model", "task"))
 
         pm.Binomial("k_like", n=n_obs, p=p, observed=k_obs, dims=("model", "task"))
-
+        # sampling
         idata = pmjax.sample_numpyro_nuts(draws=2000,tune=2000,chains=4,target_accept=0.9,random_seed=seed)
 
     return model, idata
@@ -149,16 +133,8 @@ def save_pred_csv(idata, out_path):
     rows = []
     for m in ms:
         for t in ts:
-            rows.append(
-                {
-                    "model": str(m),
-                    "subject": str(t),
-                    "pred_mean": float(mu.sel(model=m, task=t).values),
-                    "pred_lower": float(lo.sel(model=m, task=t).values),
-                    "pred_upper": float(hi.sel(model=m, task=t).values),
-                }
-            )
-
+            rows.append({ "model": str(m),"subject": str(t),"pred_mean": float(mu.sel(model=m, task=t).values),"pred_lower": float(lo.sel(model=m, task=t).values),"pred_upper": float(hi.sel(model=m, task=t).values)})
+    # save directories
     df = pd.DataFrame(rows)
     d = os.path.dirname(out_path)
     if d:
